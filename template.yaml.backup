@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Moving Company Financial Analysis Crew AI'
+
+Globals:
+  Function:
+    Timeout: 600
+    MemorySize: 1024
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+        AWS_REGION_TO_USE: !Ref AWS::Region
+        ANONYMIZED_TELEMETRY: "False"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod, rahul-dev]
+
+Resources:
+  # IAM Role for Step Functions
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt FinancialPlannerFunction.Arn
+                  - !GetAtt MetadataAgentFunction.Arn
+                  - !GetAtt QueryBuilderFunction.Arn
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: FinancialCrewAIPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - states:StartExecution
+                  - states:DescribeExecution
+                  - states:GetExecutionHistory
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: '*'
+
+  # Financial Planner Function (supports both container and zip deployment)
+  FinancialPlannerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-financial-planner-agent'
+      # Use CodeUri for zip deployment (current approach)
+      CodeUri: src/planner/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      # Uncomment below for container deployment
+      # PackageType: Image
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 600
+      MemorySize: 1024
+      Environment:
+        Variables:
+          AWS_REGION_TO_USE: !Ref AWS::Region
+          AGENT_TYPE: "financial_planner"
+    # Uncomment for container deployment
+    # Metadata:
+    #   DockerTag: python3.11-v1
+    #   DockerContext: ./src/planner
+    #   Dockerfile: Dockerfile
+
+  # Metadata Agent Function (for future use)
+  MetadataAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-metadata-agent'
+      CodeUri: src/planner/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          AWS_REGION_TO_USE: !Ref AWS::Region
+          AGENT_TYPE: "metadata_agent"
+
+  # Query Builder Function (for future use)  
+  QueryBuilderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-query-builder-agent'
+      CodeUri: src/planner/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          AWS_REGION_TO_USE: !Ref AWS::Region
+          AGENT_TYPE: "query_builder"
+
+  # Step Functions State Machine for Financial Analysis
+  FinancialAnalysisStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${Environment}-financial-analysis-workflow'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Financial Analysis Workflow with Hybrid Approach",
+          "StartAt": "AnalyzeComplexity",
+          "States": {
+            "AnalyzeComplexity": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.complexity",
+                  "StringEquals": "simple",
+                  "Next": "SimpleAnalysis"
+                },
+                {
+                  "Variable": "$.use_step_functions",
+                  "BooleanEquals": true,
+                  "Next": "DetailedAnalysisFlow"
+                }
+              ],
+              "Default": "SimpleAnalysis"
+            },
+            "SimpleAnalysis": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${FinancialPlannerFunction}",
+                "Payload": {
+                  "step": "complete_analysis",
+                  "question.$": "$.question",
+                  "context.$": "$.context",
+                  "conversation_id.$": "$.conversation_id"
+                }
+              },
+              "ResultSelector": {
+                "analysis_result.$": "$.Payload.body.analysis_result",
+                "question.$": "$.Payload.body.question",
+                "conversation_id.$": "$.Payload.body.conversation_id",
+                "timestamp.$": "$.Payload.body.timestamp"
+              },
+              "End": true
+            },
+            "DetailedAnalysisFlow": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${FinancialPlannerFunction}",
+                "Payload": {
+                  "step": "task_planning",
+                  "question.$": "$.question",
+                  "context.$": "$.context"
+                }
+              },
+              "Next": "GetMetadata",
+              "ResultPath": "$.planning_result"
+            },
+            "GetMetadata": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${MetadataAgentFunction}",
+                "Payload": {
+                  "step": "metadata_retrieval",
+                  "question.$": "$.question",
+                  "execution_plan.$": "$.planning_result.Payload.body.execution_plan"
+                }
+              },
+              "Next": "ExecuteQueries",
+              "ResultPath": "$.metadata_result"
+            },
+            "ExecuteQueries": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${QueryBuilderFunction}",
+                "Payload": {
+                  "step": "query_execution",
+                  "question.$": "$.question",
+                  "metadata_analysis.$": "$.metadata_result.Payload.body.metadata_analysis",
+                  "execution_plan.$": "$.planning_result.Payload.body.execution_plan"
+                }
+              },
+              "Next": "FormatResults",
+              "ResultPath": "$.query_result"
+            },
+            "FormatResults": {
+              "Type": "Pass",
+              "Parameters": {
+                "final_analysis.$": "$.query_result.Payload.body.query_results",
+                "question.$": "$.question",
+                "conversation_id.$": "$.conversation_id",
+                "timestamp.$": "$$.State.EnteredTime",
+                "workflow_type": "detailed"
+              },
+              "End": true
+            }
+          }
+        }
+
+  # API Gateway
+  FinancialAnalysisApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${Environment}-financial-analysis-api'
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+
+  # API Gateway Lambda Function
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-financial-analysis-api'
+      CodeUri: src/api/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref FinancialAnalysisStateMachine
+          PLANNER_FUNCTION_ARN: !GetAtt FinancialPlannerFunction.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FinancialAnalysisApi
+            Path: /query
+            Method: post
+        StatusEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FinancialAnalysisApi
+            Path: /status/{execution_id}
+            Method: get
+        HealthEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FinancialAnalysisApi
+            Path: /health
+            Method: get
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL for Financial Analysis"
+    Value: !Sub "https://${FinancialAnalysisApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/query"
+    Export:
+      Name: !Sub "${Environment}-financial-analysis-api-endpoint"
+      
+  StateMachineArn:
+    Description: "Step Functions State Machine ARN"
+    Value: !Ref FinancialAnalysisStateMachine
+    Export:
+      Name: !Sub "${Environment}-financial-analysis-state-machine"
+
+  FinancialPlannerFunctionArn:
+    Description: "Financial Planner Lambda Function ARN"
+    Value: !GetAtt FinancialPlannerFunction.Arn
+    
+  MetadataAgentFunctionArn:
+    Description: "Metadata Agent Lambda Function ARN" 
+    Value: !GetAtt MetadataAgentFunction.Arn
+    
+  QueryBuilderFunctionArn:
+    Description: "Query Builder Lambda Function ARN"
+    Value: !GetAtt QueryBuilderFunction.Arn

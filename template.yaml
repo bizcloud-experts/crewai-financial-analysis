@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Async Moving Crew AI with job tracking
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes for background processing
+    MemorySize: 1024
+    Runtime: python3.11
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        JOBS_TABLE: !Ref JobsTable
+        WEAVIATE_URL: "http://ec2-54-162-122-172.compute-1.amazonaws.com:8080"
+        WEAVIATE_API_KEY: "your-secret-api-key"
+
+Resources:
+  # DynamoDB table for job tracking
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Environment}-crew-jobs"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # API Gateway (quick responses)
+  CrewApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+
+  # Main API function (starts jobs, checks status)
+  CrewApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${Environment}-moving-crew-api"
+      CodeUri: src/api/
+      Handler: app.lambda_handler
+      Timeout: 30  # Quick responses only
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CrewProcessorFunction
+      Events:
+        QueryPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CrewApi
+            Path: /query
+            Method: post
+        StatusGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CrewApi
+            Path: /status/{job_id}
+            Method: get
+
+  # Background processor (does the heavy work)
+  CrewProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${Environment}-moving-crew-processor"
+      CodeUri: src/processor/
+      Handler: processor.lambda_handler
+      Timeout: 900  # 15 minutes for AI processing
+      MemorySize: 2048
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+      Environment:
+        Variables:
+          OPENAI_API_KEY: "{{resolve:secretsmanager:openai-api-key:SecretString:api_key}}"
+
+Outputs:
+  CrewApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${CrewApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+  
+  JobsTableName:
+    Description: "DynamoDB table for job tracking"
+    Value: !Ref JobsTable

@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "moving-crew-ai"
+region = "us-east-1"
+confirm_changeset = true
+resolve_s3 = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"dev\""
+s3_prefix = "moving-crew-ai"
+disable_rollback = true
+image_repositories = []

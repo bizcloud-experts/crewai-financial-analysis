@@ -1,0 +1,101 @@
+financial_planning_task:
+  description: >
+    The user asked the following financial question: "{question}"
+
+    Analyze this financial question and create a comprehensive step-by-step plan 
+    to answer it using available agents and data sources.
+
+    Consider the following when creating your plan:
+    1. What specific financial metrics or data points are being requested?
+    2. Which database tables or data sources will be needed?
+    3. What time periods, segments, or filters should be applied?
+    4. Are there any calculations, ratios, or comparisons required?
+    5. What level of detail or aggregation is appropriate?
+
+    Create a task sequence that:
+    - Starts with the Metadata Agent to understand available data schemas
+    - Includes the Query Builder Agent to retrieve the necessary financial data
+    - Ensures proper data validation and quality checks
+    - Can be extended with additional agents if needed (trend analysis, reporting, etc.)
+
+    Important considerations:
+    - Ensure compliance with financial reporting standards
+    - Consider data freshness and accuracy requirements
+    - Plan for proper error handling and validation
+    - Structure the output for clear financial communication
+
+  expected_output: >
+    A detailed execution plan containing:
+    1. List of required financial data sources and tables
+    2. Sequence of tasks assigned to specific agents
+    3. Data requirements and filters for each task
+    4. Expected outputs and format for financial reporting
+    5. Dependencies between tasks and quality checkpoints
+
+  agent: task_planner
+
+metadata_retrieval_task:
+  description: >
+    For the financial question: "{question}"
+
+    Query the Weaviate metadata store to retrieve comprehensive schema information 
+    for the financial database tables that will be needed to answer this question.
+
+    Specifically retrieve:
+    1. Table schemas and column definitions for relevant financial data
+    2. Data types, constraints, and business meanings of financial fields
+    3. Relationships between tables (foreign keys, joins)
+    4. Any business rules or calculation logic stored in metadata
+    5. Data quality notes, update frequencies, and known limitations
+    6. Examples of how tables are typically used for financial analysis
+
+    Focus on financial data tables that may include:
+    - Revenue and billing information
+    - Cost and expense data
+    - Customer financial metrics
+    - Service profitability data
+    - Storage facility financial performance
+    - Pricing and rate structures
+
+    Present the information in both structured format and business-friendly explanations.
+
+  expected_output: >
+    1. JSON/structured representation of relevant table schemas
+    2. Business-friendly explanation of how each table relates to the financial question
+    3. Column mappings and data type information
+    4. Relationship diagrams or join logic between tables
+    5. Any important constraints, business rules, or data quality notes
+    6. Recommended query patterns for the identified financial data
+
+  agent: metadata_agent
+
+financial_query_task:
+  description: >
+    Based on the task plan and metadata information, construct and execute SQL queries 
+    to retrieve the financial data needed to answer: "{question}"
+
+    Use the schema information provided by the Metadata Agent to:
+    1. Write accurate SQL queries targeting the correct financial tables
+    2. Apply appropriate filters, aggregations, and calculations
+    3. Ensure proper handling of financial data types and precision
+    4. Include necessary joins between related financial entities
+    5. Format results for clear financial analysis and reporting
+
+    Consider financial best practices:
+    - Use appropriate time period boundaries
+    - Handle currency and decimal precision correctly
+    - Apply proper grouping for financial segments
+    - Include data validation checks
+    - Format outputs for financial stakeholders
+
+    Execute the queries and return both the raw results and any summary statistics
+    that would be helpful for financial analysis.
+
+  expected_output: >
+    1. Complete SQL query or queries used
+    2. Raw query results with proper financial formatting
+    3. Summary statistics and key financial metrics
+    4. Data quality notes or validation results
+    5. Recommendations for further analysis if applicable
+
+  agent: query_builder_agent

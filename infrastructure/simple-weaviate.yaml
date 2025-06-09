@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Simple Weaviate deployment on EC2'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: rahul-dev
+
+Resources:
+  # Security Group
+  WeaviateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Weaviate EC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: "Weaviate HTTP API"
+        - IpProtocol: tcp
+          FromPort: 50051
+          ToPort: 50051
+          CidrIp: 0.0.0.0/0
+          Description: "Weaviate gRPC API"
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: "SSH access"
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-weaviate-sg'
+
+  # IAM Role for EC2
+  WeaviateInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: WeaviateBedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:ListFoundationModels
+                  - bedrock:GetFoundationModel
+                Resource: '*'
+
+  WeaviateInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref WeaviateInstanceRole
+
+  # EC2 Instance
+  WeaviateInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c02fb55956c7d316  # Amazon Linux 2023
+      InstanceType: t3.medium
+      IamInstanceProfile: !Ref WeaviateInstanceProfile
+      SecurityGroupIds:
+        - !Ref WeaviateSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y docker
+          systemctl start docker
+          systemctl enable docker
+          usermod -a -G docker ec2-user
+          
+          # Install Docker Compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          
+          # Create Weaviate directory
+          mkdir -p /opt/weaviate
+          cd /opt/weaviate
+          
+          # Create docker-compose.yml
+          cat << 'EOF' > docker-compose.yml
+          version: '3.4'
+          services:
+            weaviate:
+              command:
+                - --host
+                - 0.0.0.0
+                - --port
+                - '8080'
+                - --scheme
+                - http
+              image: semitechnologies/weaviate:1.24.4
+              ports:
+                - "8080:8080"
+                - "50051:50051"
+              volumes:
+                - weaviate_data:/var/lib/weaviate
+              restart: on-failure:0
+              environment:
+                QUERY_DEFAULTS_LIMIT: 25
+                AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'false'
+                AUTHENTICATION_APIKEY_ENABLED: 'true'
+                AUTHENTICATION_APIKEY_ALLOWED_KEYS: 'your-secret-api-key'
+                AUTHENTICATION_APIKEY_USERS: 'admin@weaviate.io'
+                AUTHORIZATION_ADMINLIST_ENABLED: 'true'
+                AUTHORIZATION_ADMINLIST_USERS: 'admin@weaviate.io'
+                PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+                DEFAULT_VECTORIZER_MODULE: 'text2vec-aws'
+                ENABLE_MODULES: 'text2vec-aws,generative-aws'
+                AWS_REGION: '${AWS::Region}'
+                CLUSTER_HOSTNAME: 'node1'
+          volumes:
+            weaviate_data:
+          EOF
+          
+          # Start Weaviate
+          /usr/local/bin/docker-compose up -d
+          
+          # Wait for startup
+          sleep 30
+          
+          # Log status
+          echo "Weaviate setup complete" > /var/log/weaviate-setup.log
+          /usr/local/bin/docker-compose ps >> /var/log/weaviate-setup.log
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-weaviate-instance'
+
+Outputs:
+  WeaviateEndpoint:
+    Description: "Weaviate API endpoint"
+    Value: !Sub "http://${WeaviateInstance.PublicDnsName}:8080"
+  
+  WeaviateApiKey:
+    Description: "Weaviate API key"
+    Value: "your-secret-api-key"
+  
+  InstanceId:
+    Description: "Instance ID"
+    Value: !Ref WeaviateInstance

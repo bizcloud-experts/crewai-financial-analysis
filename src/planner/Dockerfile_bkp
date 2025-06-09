@@ -1,0 +1,52 @@
+# Multi-stage build for faster subsequent builds
+FROM --platform=linux/amd64 public.ecr.aws/lambda/python:3.11 as base
+
+# Install system dependencies
+RUN yum update -y && \
+    yum install -y gcc g++ make git wget tar gzip zlib-devel openssl-devel libffi-devel && \
+    yum clean all
+
+# Install newer sqlite3 from source (this layer will be cached)
+RUN cd /tmp && \
+    wget https://www.sqlite.org/2023/sqlite-autoconf-3430200.tar.gz && \
+    tar xzf sqlite-autoconf-3430200.tar.gz && \
+    cd sqlite-autoconf-3430200 && \
+    ./configure --prefix=/usr/local && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/sqlite-autoconf-3430200*
+
+# Update library paths
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+
+# Install base Python packages (this layer will be cached)
+# RUN pip install --no-cache-dir --upgrade pip && \
+#     pip install --no-cache-dir pysqlite3-binary
+RUN pip install --no-cache-dir --upgrade pip
+
+# Final stage
+FROM --platform=linux/amd64 base
+
+# Set environment variables for writable directories in Lambda
+ENV HOME=/tmp
+ENV TMPDIR=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
+ENV XDG_DATA_HOME=/tmp/.local/share
+ENV XDG_CONFIG_HOME=/tmp/.config
+ENV CHROMA_DB_IMPL=duckdb+parquet
+ENV ANONYMIZED_TELEMETRY=False
+
+# Create writable directories for CrewAI/ChromaDB
+RUN mkdir -p /tmp/.cache /tmp/.local/share /tmp/.config /tmp/chroma_db
+
+# Copy requirements and install only app-specific dependencies
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy function code (this changes most often)
+COPY handler.py ${LAMBDA_TASK_ROOT}/
+
+# Set the CMD to your handler
+CMD [ "handler.lambda_handler" ]

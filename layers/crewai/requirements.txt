@@ -1,0 +1,5 @@
+onnxruntime==1.16.3
+crewai
+# langchain>=0.1.0
+langchain-aws>=0.1.0
+# pydantic>=2.0.0
