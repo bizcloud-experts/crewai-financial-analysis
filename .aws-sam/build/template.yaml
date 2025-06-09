@@ -1,110 +1,72 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Async Moving Crew AI with job tracking
-
-  '
 Parameters:
   Environment:
     Type: String
-    Default: dev
+    Default: rahul-dev
+    Description: Environment name
     AllowedValues:
-    - dev
+    - rahul-dev
     - staging
-    - prod
-Globals:
-  Function:
-    Timeout: 900
-    MemorySize: 1024
-    Runtime: python3.11
-    Environment:
-      Variables:
-        ENVIRONMENT:
-          Ref: Environment
-        JOBS_TABLE:
-          Ref: JobsTable
-        WEAVIATE_URL: http://ec2-54-162-122-172.compute-1.amazonaws.com:8080
-        WEAVIATE_API_KEY: your-secret-api-key
+    - production
 Resources:
-  JobsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName:
-        Fn::Sub: ${Environment}-crew-jobs
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-      - AttributeName: job_id
-        AttributeType: S
-      KeySchema:
-      - AttributeName: job_id
-        KeyType: HASH
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
-  CrewApi:
-    Type: AWS::Serverless::Api
-    Properties:
-      StageName:
-        Ref: Environment
-      Cors:
-        AllowMethods: '''GET,POST,OPTIONS'''
-        AllowHeaders: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'''
-        AllowOrigin: '''*'''
   CrewApiFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName:
-        Fn::Sub: ${Environment}-moving-crew-api
+        Fn::Sub: ${Environment}-async-crew-api
       CodeUri: CrewApiFunction
       Handler: app.lambda_handler
+      Runtime: python3.11
       Timeout: 30
+      Environment:
+        Variables:
+          ENVIRONMENT:
+            Ref: Environment
+          JOBS_TABLE: rahul-dev-crew-jobs
       Policies:
       - DynamoDBCrudPolicy:
-          TableName:
-            Ref: JobsTable
-      - LambdaInvokePolicy:
-          FunctionName:
-            Ref: CrewProcessorFunction
+          TableName: rahul-dev-crew-jobs
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action: lambda:InvokeFunction
+          Resource:
+            Fn::GetAtt:
+            - CrewProcessorFunction
+            - Arn
       Events:
-        QueryPost:
+        QueryApi:
           Type: Api
           Properties:
-            RestApiId:
-              Ref: CrewApi
             Path: /query
-            Method: post
-        StatusGet:
+            Method: POST
+        StatusApi:
           Type: Api
           Properties:
-            RestApiId:
-              Ref: CrewApi
             Path: /status/{job_id}
-            Method: get
+            Method: GET
     Metadata:
       SamResourceId: CrewApiFunction
   CrewProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName:
-        Fn::Sub: ${Environment}-moving-crew-processor
+        Fn::Sub: ${Environment}-async-crew-processor
       CodeUri: CrewProcessorFunction
       Handler: processor.lambda_handler
+      Runtime: python3.11
       Timeout: 900
-      MemorySize: 2048
-      Policies:
-      - DynamoDBCrudPolicy:
-          TableName:
-            Ref: JobsTable
       Environment:
         Variables:
-          OPENAI_API_KEY: '{{resolve:secretsmanager:openai-api-key:SecretString:api_key}}'
+          JOBS_TABLE: rahul-dev-crew-jobs
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: rahul-dev-crew-jobs
     Metadata:
       SamResourceId: CrewProcessorFunction
 Outputs:
-  CrewApiUrl:
+  ApiUrl:
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
     Description: API Gateway endpoint URL
-    Value:
-      Fn::Sub: https://${CrewApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
-  JobsTableName:
-    Description: DynamoDB table for job tracking
-    Value:
-      Ref: JobsTable

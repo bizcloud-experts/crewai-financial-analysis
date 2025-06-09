@@ -1,6 +1,6 @@
 version = 0.1
 [default.global.parameters]
-stack_name = "moving-crew-ai"
+stack_name = "rahul-dev-async-crew"
 region = "us-east-1"
 confirm_changeset = false
 resolve_s3 = true
@@ -9,5 +9,5 @@ capabilities = "CAPABILITY_IAM"
 parameter_overrides = "Environment=\"rahul-dev\""
 s3_prefix = "moving-crew-ai-rahul"
 disable_rollback = false
-stack_name = "moving-crew-ai-rahul"
+template_file = "template-async-simple.yaml"
 resolve_image_repos = true

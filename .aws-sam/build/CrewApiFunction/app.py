@@ -80,7 +80,7 @@ def start_job(event, jobs_table):
     # Start background processor
     try:
         lambda_client.invoke(
-            FunctionName=f"{os.environ['ENVIRONMENT']}-moving-crew-processor",
+            FunctionName=f"{os.environ['ENVIRONMENT']}-async-crew-processor",
             InvocationType='Event',
             Payload=json.dumps({
                 'job_id': job_id,

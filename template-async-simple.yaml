@@ -6,6 +6,10 @@ Parameters:
     Type: String
     Default: rahul-dev
     Description: Environment name
+    AllowedValues:
+      - rahul-dev
+      - staging
+      - production
 
 Resources:
   CrewApiFunction:
